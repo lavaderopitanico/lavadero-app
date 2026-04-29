@@ -2,103 +2,96 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime
+import urllib.parse
 
-# Configuración de base de datos con campos de "Ficha"
-conn = sqlite3.connect('lavadero_profesional.db')
+# Conexión a base de datos
+conn = sqlite3.connect('lavadero_mecanica.db')
 c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS fichas 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-              fecha TEXT,
-              propietario TEXT, 
-              telefono TEXT,
-              email TEXT,
-              matricula TEXT, 
-              marca_modelo TEXT,
-              color TEXT,
-              tipo_trabajo TEXT, 
-              precio REAL, 
-              estado_pago TEXT,
-              observaciones TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS servicios 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, propietario TEXT, 
+              telefono TEXT, matricula TEXT, marca_modelo TEXT, trabajo TEXT, 
+              precio REAL, estado TEXT, tipo TEXT, observaciones TEXT)''')
 conn.commit()
 
-st.set_page_config(page_title="Lavadero Pro - Fichas", layout="wide")
+st.set_page_config(page_title="Lavadero & Mecánica Pro", layout="wide")
 
-# --- ESTILOS ---
-st.markdown("""
-    <style>
-    .stButton>button { width: 100%; border-radius: 10px; font-weight: bold; }
-    .css-1r6slb0 { background-color: #f0f2f6; padding: 20px; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- NAVEGACIÓN ---
+menu = st.sidebar.selectbox("Menú Principal", ["📅 Agenda de Citas", "🛠️ Taller y Lavadero (Hoy)", "📊 Historial y Caja"])
 
-st.title("📑 Gestión de Fichas de Vehículos")
-
-# --- MENÚ SUPERIOR ---
-col1, col2, col3 = st.columns(3)
-with col1:
-    btn_nueva = st.button("➕ NUEVA FICHA / ENTRADA")
-with col2:
-    btn_ver = st.button("🔍 VER HISTORIAL / BUSCAR")
-with col3:
-    btn_caja = st.button("💰 CIERRE DE CAJA")
-
-# Control de navegación
-if btn_nueva: st.session_state.seccion = "nueva"
-if btn_ver: st.session_state.seccion = "ver"
-if btn_caja: st.session_state.seccion = "caja"
-
-seccion = st.session_state.get("seccion", "nueva")
-
-# --- SECCIÓN: NUEVA FICHA (RELLENAR DATOS) ---
-if seccion == "nueva":
-    st.subheader("📝 Rellenar Ficha de Entrada")
-    with st.form("ficha_detallada", clear_on_submit=True):
-        col_a, col_b = st.columns(2)
-        
-        with col_a:
-            st.markdown("### 👤 Datos del Propietario")
-            nombre = st.text_input("Nombre Completo")
-            tel = st.text_input("Teléfono de Contacto")
-            correo = st.text_input("Email")
+# --- SECCIÓN 1: AGENDA DE CITAS ---
+if menu == "📅 Agenda de Citas":
+    st.title("📅 Reserva de Citas")
+    
+    with st.expander("➕ Registrar Nueva Cita"):
+        with st.form("nueva_cita"):
+            col1, col2 = st.columns(2)
+            f_cita = col1.date_input("Fecha")
+            h_cita = col2.time_input("Hora")
+            cliente = col1.text_input("Nombre del Cliente")
+            tel = col1.text_input("WhatsApp (ej: 34600000000)")
+            mat = col2.text_input("Matrícula")
+            obs = st.text_area("Notas / Pedido especial")
             
-        with col_b:
-            st.markdown("### 🚗 Datos del Vehículo")
-            mat = st.text_input("Matrícula")
-            modelo = st.text_input("Marca y Modelo (ej: Seat Ibiza)")
-            color = st.text_input("Color del vehículo")
+            if st.form_submit_button("Reservar Cita"):
+                fecha_full = f"{f_cita} {h_cita}"
+                c.execute("INSERT INTO servicios (fecha, propietario, telefono, matricula, estado, tipo, observaciones) VALUES (?,?,?,?,?,?,?)",
+                          (fecha_full, cliente, tel, mat, "Pendiente", "CITA", obs))
+                conn.commit()
+                st.success("Cita reservada")
 
-        st.markdown("---")
-        st.markdown("### 🛠️ Detalles del Servicio")
-        c1, c2, c3 = st.columns(3)
-        trabajo = c1.selectbox("Servicio", ["Lavado Exterior", "Lavado Completo", "Tapicería", "Motor", "Pulido", "Cerámico"])
-        precio = c2.number_input("Precio Pactado (€)", min_value=0.0)
-        pago = c3.selectbox("Estado inicial", ["Pendiente", "Pagado"])
+    st.subheader("Próximas Citas")
+    df_citas = pd.read_sql_query("SELECT * FROM servicios WHERE tipo='CITA' ORDER BY fecha ASC", conn)
+    
+    for i, r in df_citas.iterrows():
+        col_c, col_b = st.columns([0.7, 0.3])
+        col_c.write(f"📌 *{r['fecha']}* | {r['matricula']} - {r['propietario']}")
         
-        notas = st.text_area("Observaciones (Daños previos, objetos olvidados, etc.)")
+        # BOTÓN WHATSAPP RECORDATORIO
+        msg = urllib.parse.quote(f"Hola {r['propietario']}, te recordamos tu cita para el día {r['fecha']} en nuestro centro. ¡Te esperamos!")
+        col_b.markdown(f"[🔔 Avisar por WhatsApp](https://wa.me/{r['telefono']}?text={msg})")
         
-        if st.form_submit_button("💾 GUARDAR FICHA Y GENERAR ENTRADA"):
-            fecha_act = datetime.now().strftime("%d/%m/%Y %H:%M")
-            c.execute('''INSERT INTO fichas (fecha, propietario, telefono, email, matricula, marca_modelo, color, tipo_trabajo, precio, estado_pago, observaciones) 
-                         VALUES (?,?,?,?,?,?,?,?,?,?,?)''', 
-                      (fecha_act, nombre, tel, correo, mat, modelo, color, trabajo, precio, pago, notas))
+        if col_b.button(f"Comenzar Trabajo - ID {r['id']}"):
+            c.execute("UPDATE servicios SET tipo='TRABAJO' WHERE id=?", (r['id'],))
             conn.commit()
-            st.success(f"Ficha de {mat} guardada correctamente.")
+            st.rerun()
 
-# --- SECCIÓN: VER HISTORIAL ---
-elif seccion == "ver":
-    st.subheader("🔍 Buscador de Fichas")
-    busqueda = st.text_input("Buscar por Matrícula o Nombre")
-    df = pd.read_sql_query("SELECT * FROM fichas", conn)
+# --- SECCIÓN 2: TALLER Y LAVADERO ---
+elif menu == "🛠️ Taller y Lavadero (Hoy)":
+    st.title("🛠️ Servicios en Curso")
     
-    if busqueda:
-        df = df[df['matricula'].str.contains(busqueda, case=False) | df['propietario'].str.contains(busqueda, case=False)]
-    
-    st.dataframe(df, use_container_width=True)
+    with st.sidebar:
+        st.header("Entrada Directa")
+        with st.form("entrada_directa"):
+            nombre = st.text_input("Cliente")
+            matricula = st.text_input("Matrícula")
+            tel = st.text_input("Teléfono")
+            
+            # LISTA DE SERVICIOS PEDIDOS
+            trabajo = st.multiselect("Servicios a realizar", [
+                "Lavado Básico", "Lavado Motor y Bajos", "Engrases", 
+                "Cambio de Aceite", "Filtro de Aire", "Filtro de Gasoil", 
+                "Filtro Aceite", "Filtro de Polen"
+            ])
+            
+            precio = st.number_input("Precio Total (€)", min_value=0.0)
+            if st.form_submit_button("Registrar Entrada"):
+                c.execute("INSERT INTO servicios (fecha, propietario, telefono, matricula, trabajo, precio, estado, tipo) VALUES (?,?,?,?,?,?,?,?)",
+                          (datetime.now().strftime("%Y-%m-%d %H:%M"), nombre, tel, matricula, ", ".join(trabajo), precio, "En Proceso", "TRABAJO"))
+                conn.commit()
+                st.rerun()
 
-# --- SECCIÓN: CAJA ---
-elif seccion == "caja":
-    st.subheader("💰 Resumen de Caja")
-    df_caja = pd.read_sql_query("SELECT * FROM fichas WHERE estado_pago = 'Pagado'", conn)
-    total = df_caja['precio'].sum()
-    st.metric("Total Recaudado en Fichas Pagadas", f"{total} €")
-    st.table(df_caja[['fecha', 'matricula', 'tipo_trabajo', 'precio']])
+    df_h = pd.read_sql_query("SELECT * FROM servicios WHERE tipo='TRABAJO' AND estado='En Proceso'", conn)
+    st.table(df_h[['fecha', 'matricula', 'propietario', 'trabajo', 'precio']])
+    
+    for i, r in df_h.iterrows():
+        if st.button(f"✅ Finalizar y Cobrar: {r['matricula']}"):
+            c.execute("UPDATE servicios SET estado='Pagado' WHERE id=?", (r['id'],))
+            conn.commit()
+            st.rerun()
+
+# --- SECCIÓN 3: CAJA ---
+elif menu == "📊 Historial y Caja":
+    st.title("💰 Historial de Ventas")
+    df_p = pd.read_sql_query("SELECT * FROM servicios WHERE estado='Pagado'", conn)
+    st.dataframe(df_p)
+    st.metric("Total Caja", f"{df_p['precio'].sum()} €")
